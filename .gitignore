@@ -1,0 +1,15 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Django
+staticfiles/
+
+# IDE / OS
+.idea/
+.DS_Store
