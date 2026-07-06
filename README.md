@@ -57,12 +57,23 @@ New users are seeded with a small random BTC balance (1–10 BTC) on registratio
 - The Django secret key and MongoDB connection details are **never** hardcoded — they're loaded from a local `.env` file, excluded from version control via `.gitignore`.
 - This project has no integration with any real cryptocurrency exchange, wallet, or blockchain — all balances and trades are entirely simulated inside the app's own database. There are no real funds, API keys, or private keys involved anywhere in this codebase.
 
-## A note on the order-matching engine
+## The order-matching engine
 
-The core of this project — matching buy and sell orders in `app/views.py` — is implemented as a fairly long, deeply nested set of conditionals handling partial fills, exact matches, and order splitting across both the buy and sell sides. It works, but it's dense and has a fair amount of duplication between the buy and sell branches.
+Order matching lives in `app/matching.py`, as a standalone, dependency-free function (`match_order`) — no Django, no MongoDB required to use or test it. `app/views.py` handles the Django/database side (creating orders, persisting balances), and delegates all matching logic to this module.
 
-I've deliberately left this logic untouched while preparing the repository for publication, rather than refactoring it, because restructuring order-matching logic carries a real risk of silently changing its behavior — and getting it wrong in a piece of code that moves (simulated) money is worse than leaving it verbose. If I were to revisit this project, extracting a single shared `match_order()` function parameterized by order side would be the natural next step to reduce duplication safely, backed by tests that pin down the current behavior first.
+**How it works**: incoming orders execute as true market orders, with no price limit protection (unlimited slippage). The engine walks the resting order book in best-price-first order — an incoming sell matches the highest bid first, an incoming buy matches the lowest ask first — consuming resting orders one at a time, **each at its own price**, until either the requested quantity is fully filled or the book runs out. Any unfilled remainder becomes a new resting order at the trader's originally submitted price. A self-trade (an order matching against the same profile's own resting order) closes both sides with no balance change.
+
+**Why this design**: the original implementation had a real bug here — when a large order matched against resting orders from *multiple different users*, every fill was credited to the very first matched user's balance, regardless of who actually owned each order. This was caught with a plain-Python reproduction (see `app/test_matching.py`, `test_sell_spans_multiple_buyers_at_their_own_prices`) before writing any fix, specifically to confirm the bug with real numbers rather than by inspection alone.
+
+**A second, smaller fix**: the original pre-check for placing a buy order compared the trader's fiat balance against the order's unit price alone (`fiatMoney >= price`), rather than the actual total cost (`price × quantity`) — meaning a trader could place a buy order far larger than they could actually afford. This is now checked correctly.
+
+**Running the tests** (no MongoDB, no Django setup needed):
+```bash
+pip install pytest
+pytest app/test_matching.py -v
+```
 
 ## Purpose
 
 Personal project built to explore full-stack web development with Django, working with a NoSQL database (MongoDB), and simulating financial/trading logic.
+

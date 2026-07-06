@@ -57,12 +57,23 @@ I nuovi utenti ricevono un piccolo saldo BTC casuale (1-10 BTC) alla registrazio
 - La secret key di Django e i parametri di connessione a MongoDB **non sono mai** scritti direttamente nel codice: vengono caricati da un file `.env` locale, escluso dal controllo di versione tramite `.gitignore`.
 - Questo progetto non ha alcuna integrazione con exchange, wallet o blockchain reali — tutti i saldi e gli scambi sono interamente simulati all'interno del database dell'app. Non ci sono fondi reali, API key o chiavi private in nessun punto di questo codice.
 
-## Una nota sul motore di order-matching
+## Il motore di order-matching
 
-Il cuore di questo progetto — l'incrocio tra ordini di acquisto e vendita in `app/views.py` — è implementato come una sequenza piuttosto lunga di condizioni annidate in profondità, che gestisce riempimenti parziali, corrispondenze esatte e frazionamento degli ordini su entrambi i lati (buy e sell). Funziona, ma è denso e presenta una discreta duplicazione tra i due rami.
+La logica di matching vive in `app/matching.py`, come funzione autonoma e senza dipendenze (`match_order`) — non richiede né Django né MongoDB per essere usata o testata. `app/views.py` gestisce la parte Django/database (creazione ordini, persistenza dei saldi), e delega tutta la logica di matching a questo modulo.
 
-Ho scelto deliberatamente di non toccare questa logica durante la preparazione del repository per la pubblicazione, invece di refactorizzarla, perché ristrutturare una logica di order-matching comporta un rischio reale di modificarne silenziosamente il comportamento — e sbagliare in un pezzo di codice che movimenta (seppur simulato) denaro è peggio che lasciarlo verboso. Se dovessi riprendere in mano questo progetto, estrarre un'unica funzione condivisa `match_order()` parametrizzata sul lato dell'ordine sarebbe il passo naturale per ridurre la duplicazione in modo sicuro, supportato da test che fissino prima il comportamento attuale.
+**Come funziona**: gli ordini in ingresso vengono eseguiti come veri ordini di mercato, senza protezione di prezzo (slippage senza limite). Il motore scorre il book degli ordini in attesa dando priorità al miglior prezzo — una vendita in ingresso incrocia prima il prezzo di acquisto più alto, un acquisto in ingresso incrocia prima il prezzo di vendita più basso — consumando gli ordini uno alla volta, **ciascuno al proprio prezzo**, fino a soddisfare la quantità richiesta o esaurire il book. Qualsiasi residuo non eseguito diventa un nuovo ordine in attesa al prezzo originariamente inserito dal trader. Un self-trade (un ordine che incrocia un proprio ordine in attesa) chiude entrambi i lati senza alcun movimento di saldo.
+
+**Perché questo design**: l'implementazione originale aveva qui un bug reale — quando un ordine grande si incrociava con ordini in attesa di *più utenti diversi*, ogni esecuzione veniva accreditata al saldo del primo utente incrociato, indipendentemente da chi possedesse realmente ciascun ordine. Il bug è stato individuato con una riproduzione in Python puro (vedi `app/test_matching.py`, `test_sell_spans_multiple_buyers_at_their_own_prices`) prima di scrivere qualsiasi correzione, proprio per confermarlo con numeri reali e non solo per ispezione visiva del codice.
+
+**Una seconda correzione, più piccola**: il controllo preliminare per piazzare un ordine di acquisto confrontava il saldo fiat del trader con il solo prezzo unitario dell'ordine (`fiatMoney >= price`), invece del costo totale reale (`price × quantity`) — questo avrebbe permesso a un trader di piazzare un ordine di acquisto ben più grande di quanto potesse realmente permettersi. Ora viene controllato correttamente.
+
+**Per eseguire i test** (senza MongoDB, senza configurazione Django):
+```bash
+pip install pytest
+pytest app/test_matching.py -v
+```
 
 ## Scopo
 
 Progetto personale realizzato per approfondire lo sviluppo web full-stack con Django, l'utilizzo di un database NoSQL (MongoDB) e la simulazione di logiche finanziarie/di trading.
+
